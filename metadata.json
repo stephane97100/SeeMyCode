@@ -1,0 +1,6 @@
+{
+  "name": "SeeMyCode",
+  "description": "Coller, corriger par l'IA ou partager du code orienté web avec la communauté de manière éphémère.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

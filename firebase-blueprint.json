@@ -1,0 +1,51 @@
+{
+  "entities": {
+    "CodeSnippet": {
+      "title": "Code Snippet",
+      "description": "A shared or saved code snippet, optionally a fork of another snippet",
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "The raw code contents"
+        },
+        "language": {
+          "type": "string",
+          "description": "Programming language of the code"
+        },
+        "title": {
+          "type": "string",
+          "description": "Optional title for the code snippet"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation timestamp"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when this snippet expires (createdAt + 30 days)"
+        },
+        "parentCodeId": {
+          "type": "string",
+          "description": "Document ID of original snippet if this is a fork"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Custom tags added to the snippet"
+        }
+      },
+      "required": ["code", "language", "createdAt", "expiresAt"]
+    }
+  },
+  "firestore": {
+    "snippets/{snippetId}": {
+      "schema": "CodeSnippet",
+      "description": "Storage for all shared code snippets"
+    }
+  }
+}

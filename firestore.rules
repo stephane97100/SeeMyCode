@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Default deny catch-all
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Snippets Collection Rules
+    match /snippets/{snippetId} {
+      // Allow read (get only) by precise ID
+      allow get: if true;
+      allow list: if false; // Block query scraping
+
+      // Allow users to create snippets
+      allow create: if request.resource.data.code is string 
+                   && request.resource.data.code.size() <= 1048576 // limit 1MB code text
+                   && request.resource.data.language is string
+                   && request.resource.data.language.size() <= 128
+                   && request.resource.data.title is string
+                   && request.resource.data.title.size() <= 256
+                   && request.resource.data.createdAt is string
+                   && request.resource.data.expiresAt is string
+                   && (!("tags" in request.resource.data) || (request.resource.data.tags is list && request.resource.data.tags.size() <= 10 && (request.resource.data.tags.size() == 0 || request.resource.data.tags[0] is string)));
+                   
+      // Prevent updates or deletions to guarantee immutability of shared codes
+      allow update, delete: if false;
+    }
+
+  }
+}
