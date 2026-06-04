@@ -26,7 +26,9 @@ import {
   Linkedin,
   Mail,
   Filter,
-  Eye
+  Eye,
+  Maximize2,
+  Minimize2
 } from "lucide-react";
 
 // List of supported languages for the selector
@@ -35,7 +37,7 @@ const SUPPORTED_LANGUMENTS = [
   { value: "css", label: "CSS", placeholder: "/* Styles CSS */\n.card {\n  background: #3b82f6;\n  padding: 1rem;\n  border-radius: 8px;\n}" },
   { value: "javascript", label: "JavaScript", placeholder: "// Code JS\nfunction calculateSum(a, b) {\n  return a + b;\n}\nconsole.log(calculateSum(5, 10));" },
   { value: "typescript", label: "TypeScript", placeholder: "// Code TS\ninterface User {\n  id: number;\n  name: string;\n}\nconst greet = (u: User): string => `Hello ${u.name}`;" },
-  { value: "typescript", label: "React (TSX)", placeholder: "import React, { useState } from 'react';\n\nexport default function Counter() {\n  const [count, setCount] = useState(0);\n  return (\n    <div className=\"p-4 flex flex-col items-center justify-center bg-slate-900 text-white rounded-xl min-h-[150px]\">\n      <p className=\"text-sm font-mono text-slate-400 mb-2\">Composant React en action</p>\n      <button \n        onClick={() => setCount(count + 1)}\n        className=\"px-4 py-2 bg-indigo-600 hover:bg-indigo-505 rounded-lg font-bold text-xs shadow transition-all\"\n      >\n        Incrémenter : {count}\n      </button>\n    </div>\n  );\n}" },
+  { value: "react", label: "React (TSX)", placeholder: "import React, { useState } from 'react';\n\nexport default function Counter() {\n  const [count, setCount] = useState(0);\n  return (\n    <div className=\"p-4 flex flex-col items-center justify-center bg-slate-900 text-white rounded-xl min-h-[150px]\">\n      <p className=\"text-sm font-mono text-slate-400 mb-2\">Composant React en action</p>\n      <button \n        onClick={() => setCount(count + 1)}\n        className=\"px-4 py-2 bg-indigo-600 hover:bg-indigo-505 rounded-lg font-bold text-xs shadow transition-all\"\n      >\n        Incrémenter : {count}\n      </button>\n    </div>\n  );\n}" },
   { value: "python", label: "Python", placeholder: "# Script Python - Détermination des nombres premiers\ndef find_primes(limit):\n    primes = []\n    for num in range(2, limit + 1):\n        is_prime = True\n        for i in range(2, int(num ** 0.5) + 1):\n            if num % i == 0:\n                is_prime = False\n                break\n        if is_prime:\n            primes.append(num)\n    return primes\n\n# Affichage du résultat\nprint(\"Nombres premiers jusqu'à 20 :\", find_primes(20))" },
   { value: "php", label: "PHP", placeholder: "<?php\n// Script PHP\n$items = ['HTML', 'CSS', 'JS'];\nforeach ($items as $item) {\n    echo \"Skill: $item\\n\";\n}" },
   { value: "csharp", label: "ASP.NET (C#)", placeholder: "using System;\n// ASP.NET C# class\npublic class Program {\n    public static void Main() {\n        Console.WriteLine(\"Hello World from ASP.NET C#\");\n    }\n}" },
@@ -429,10 +431,10 @@ function getPreviewDoc(code: string, language: string) {
       </head>
       <body>
         <div class="card">
-          <span class="badge">${language}</span>
+          <span class="badge">${language === "react" ? "React (TSX)" : language.toUpperCase()}</span>
           <h1>Remplaçant Console dynamique</h1>
           <p>
-            Le langage <strong>${language}</strong> s'exécute côté serveur ou nécessite une machine virtuelle dédiée. L'exécution dynamique en direct (Live Sandbox) n'est pas supportée nativement dans une iframe client standard.
+            Le langage <strong>${language === "react" ? "React (TSX)" : language}</strong> s'exécute côté serveur ou nécessite une machine virtuelle dédiée. L'exécution dynamique en direct (Live Sandbox) n'est pas supportée nativement dans une iframe client standard.
           </p>
           <p style="margin-top: 12px; opacity: 0.8; font-size: 12px;">
             Utilisez <strong>HTML</strong>, <strong>CSS</strong>, <strong>JavaScript</strong> ou <strong>Markdown</strong> pour obtenir un rendu visuel en temps réel et interactif !
@@ -496,6 +498,29 @@ export default function App() {
 
   // Active View Tab: Code Editor vs Real-time HTML Preview
   const [activeTab, setActiveTab] = useState<"code" | "preview">("code");
+  const [isFullscreenPreview, setIsFullscreenPreview] = useState(false);
+
+  // Force activeTab to "code" for server-side interpreted languages
+  useEffect(() => {
+    if (["react", "csharp", "php", "python"].includes(language)) {
+      setActiveTab("code");
+    }
+  }, [language]);
+
+  // Listen for Escape key to exit fullscreen preview
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setIsFullscreenPreview(false);
+      }
+    };
+    if (isFullscreenPreview) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isFullscreenPreview]);
 
   // Refs to reference the editor instance locally
   const editorRef = useRef<any>(null);
@@ -1074,13 +1099,20 @@ export default function App() {
                         <span>Éditeur</span>
                       </button>
                       <button
-                        onClick={() => setActiveTab("preview")}
-                        className={`flex items-center gap-1 px-3 py-1 text-[11px] font-bold rounded-md transition-all cursor-pointer ${
-                          activeTab === "preview"
-                            ? "bg-indigo-600 text-white shadow-sm"
-                            : "text-slate-400 hover:text-slate-200"
+                        onClick={() => {
+                          if (!["react", "csharp", "php", "python"].includes(language)) {
+                            setActiveTab("preview");
+                          }
+                        }}
+                        disabled={["react", "csharp", "php", "python"].includes(language)}
+                        className={`flex items-center gap-1 px-3 py-1 text-[11px] font-bold rounded-md transition-all ${
+                          ["react", "csharp", "php", "python"].includes(language)
+                            ? "opacity-30 cursor-not-allowed text-slate-500"
+                            : activeTab === "preview"
+                            ? "bg-indigo-600 text-white shadow-sm cursor-pointer"
+                            : "text-slate-400 hover:text-slate-200 cursor-pointer"
                         }`}
-                        title="Rendu visuel dynamique"
+                        title={["react", "csharp", "php", "python"].includes(language) ? "Aperçu indisponible (langage interprété côté serveur)" : "Rendu visuel dynamique"}
                       >
                         <Eye className="w-3 h-3" />
                         <span>Aperçu</span>
@@ -1089,27 +1121,38 @@ export default function App() {
                   </div>
 
                   <span className="text-[10px] uppercase tracking-widest text-slate-500 font-mono font-bold">
-                    {activeTab === "code" ? `editor.${language}` : "preview.html"} {isReadOnlyMode ? '— readonly' : ''}
+                    {activeTab === "code" ? `editor.${language === "react" ? "tsx" : language}` : "preview.html"} {isReadOnlyMode ? '— readonly' : ''}
                   </span>
                   
-                  {/* Real-time Syntax Check Gutter Switch Toggle */}
+                  {/* Real-time Syntax Check Gutter Switch Toggle / Fullscreen Button */}
                   <div className="flex items-center gap-2">
-                    <label className="inline-flex items-center gap-1.5 cursor-pointer text-[10px] font-mono font-bold text-slate-400 select-none">
-                      <input
-                        type="checkbox"
-                        checked={showLinting}
-                        onChange={(e) => {
-                          const val = e.target.checked;
-                          setShowLinting(val);
-                          // Force update panel visibility if turning off
-                          if (!val) setShowDiagnosticsPanel(false);
-                        }}
-                        className="sr-only peer"
-                      />
-                      <div className="relative w-6 h-3.5 bg-[#0f172a] rounded-full peer peer-focus:outline-none peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-indigo-600 peer-checked:after:bg-white peer-checked:after:border-transparent"></div>
-                      <span className="hidden sm:inline">Gutter syntax errors : {showLinting ? "Actif" : "Masqué"}</span>
-                      <span className="inline sm:hidden">Linter {showLinting ? "ON" : "OFF"}</span>
-                    </label>
+                    {activeTab === "preview" ? (
+                      <button
+                        onClick={() => setIsFullscreenPreview(true)}
+                        className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600/20 hover:bg-indigo-650 text-indigo-305 hover:text-white border border-indigo-505/30 hover:border-indigo-500/50 rounded-lg text-[10px] font-bold tracking-wide transition-all select-none cursor-pointer"
+                        title="Voir la démo en Plein Écran"
+                      >
+                        <Maximize2 className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Plein écran</span>
+                      </button>
+                    ) : (
+                      <label className="inline-flex items-center gap-1.5 cursor-pointer text-[10px] font-mono font-bold text-slate-400 select-none">
+                        <input
+                          type="checkbox"
+                          checked={showLinting}
+                          onChange={(e) => {
+                            const val = e.target.checked;
+                            setShowLinting(val);
+                            // Force update panel visibility if turning off
+                            if (!val) setShowDiagnosticsPanel(false);
+                          }}
+                          className="sr-only peer"
+                        />
+                        <div className="relative w-6 h-3.5 bg-[#0f172a] rounded-full peer peer-focus:outline-none peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-slate-400 after:border-slate-300 after:border after:rounded-full after:h-2.5 after:w-2.5 after:transition-all peer-checked:bg-indigo-600 peer-checked:after:bg-white peer-checked:after:border-transparent"></div>
+                        <span className="hidden sm:inline">Gutter syntax errors : {showLinting ? "Actif" : "Masqué"}</span>
+                        <span className="inline sm:hidden">Linter {showLinting ? "ON" : "OFF"}</span>
+                      </label>
+                    )}
                   </div>
                 </div>
 
@@ -1117,7 +1160,7 @@ export default function App() {
                   <div className="flex-1 min-h-[380px] lg:min-h-0 lg:h-full p-2 bg-[#1e293b]">
                     <Editor
                       height="100%"
-                      language={language}
+                      language={language === "react" ? "typescript" : language}
                       theme="vs-dark"
                       value={code}
                       onChange={(val) => setCode(val || "")}
@@ -1167,6 +1210,18 @@ export default function App() {
                         <span className="text-[10px] font-mono">Copier</span>
                       </>
                     )}
+                  </button>
+                )}
+
+                {/* Floating full-screen button for Preview */}
+                {activeTab === "preview" && (
+                  <button
+                    onClick={() => setIsFullscreenPreview(true)}
+                    className="absolute right-4 bottom-4 z-10 p-2.5 bg-slate-900/95 border border-slate-700/80 rounded-lg hover:bg-indigo-600 hover:border-indigo-500 text-slate-300 hover:text-white transition-all shadow-md active:scale-95 flex items-center gap-1.5"
+                    title="Agrandir en Plein Écran"
+                  >
+                    <Maximize2 className="w-3.5 h-3.5 text-indigo-450" />
+                    <span className="text-[10px] font-bold font-mono">Plein écran</span>
                   </button>
                 )}
               </div>
@@ -1787,6 +1842,40 @@ export default function App() {
               Fermer la fenêtre
             </button>
 
+          </div>
+        </div>
+      )}
+
+      {/* FULLSCREEN PREVIEW OVERLAY */}
+      {isFullscreenPreview && (
+        <div className="fixed inset-0 bg-[#0f172a] z-50 flex flex-col p-4 md:p-6 animate-fadeIn">
+          {/* Header */}
+          <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4 shrink-0">
+            <div className="flex items-center gap-3">
+              <Eye className="w-4 h-4 text-indigo-400" />
+              <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2">
+                <span>Aperçu de l'application</span>
+                <span className="px-2 py-0.5 bg-indigo-500/15 border border-indigo-500/30 rounded text-[10px] font-mono text-indigo-300 font-semibold uppercase">{language}</span>
+              </h3>
+            </div>
+
+            <button
+              onClick={() => setIsFullscreenPreview(false)}
+              className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-100 font-bold text-xs rounded-xl shadow transition-all active:scale-95 cursor-pointer"
+            >
+              <Minimize2 className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Quitter le plein écran (<kbd className="font-mono text-[10px] bg-slate-900 px-1 py-0.5 rounded border border-slate-700">Échap</kbd>)</span>
+            </button>
+          </div>
+
+          {/* Canvas-like live preview iframe container */}
+          <div className="flex-1 bg-white rounded-2xl overflow-hidden shadow-2xl relative border border-slate-800">
+            <iframe
+              title="SeeMyCode Fullscreen Live Preview"
+              srcDoc={getPreviewDoc(code, language)}
+              sandbox="allow-scripts"
+              className="w-full h-full border-none bg-white absolute inset-0"
+            />
           </div>
         </div>
       )}
