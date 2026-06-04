@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from "react";
 import Editor, { useMonaco } from "@monaco-editor/react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   Terminal,
   Check,
@@ -34,6 +35,8 @@ const SUPPORTED_LANGUMENTS = [
   { value: "css", label: "CSS", placeholder: "/* Styles CSS */\n.card {\n  background: #3b82f6;\n  padding: 1rem;\n  border-radius: 8px;\n}" },
   { value: "javascript", label: "JavaScript", placeholder: "// Code JS\nfunction calculateSum(a, b) {\n  return a + b;\n}\nconsole.log(calculateSum(5, 10));" },
   { value: "typescript", label: "TypeScript", placeholder: "// Code TS\ninterface User {\n  id: number;\n  name: string;\n}\nconst greet = (u: User): string => `Hello ${u.name}`;" },
+  { value: "typescript", label: "React (TSX)", placeholder: "import React, { useState } from 'react';\n\nexport default function Counter() {\n  const [count, setCount] = useState(0);\n  return (\n    <div className=\"p-4 flex flex-col items-center justify-center bg-slate-900 text-white rounded-xl min-h-[150px]\">\n      <p className=\"text-sm font-mono text-slate-400 mb-2\">Composant React en action</p>\n      <button \n        onClick={() => setCount(count + 1)}\n        className=\"px-4 py-2 bg-indigo-600 hover:bg-indigo-505 rounded-lg font-bold text-xs shadow transition-all\"\n      >\n        Incrémenter : {count}\n      </button>\n    </div>\n  );\n}" },
+  { value: "python", label: "Python", placeholder: "# Script Python - Détermination des nombres premiers\ndef find_primes(limit):\n    primes = []\n    for num in range(2, limit + 1):\n        is_prime = True\n        for i in range(2, int(num ** 0.5) + 1):\n            if num % i == 0:\n                is_prime = False\n                break\n        if is_prime:\n            primes.append(num)\n    return primes\n\n# Affichage du résultat\nprint(\"Nombres premiers jusqu'à 20 :\", find_primes(20))" },
   { value: "php", label: "PHP", placeholder: "<?php\n// Script PHP\n$items = ['HTML', 'CSS', 'JS'];\nforeach ($items as $item) {\n    echo \"Skill: $item\\n\";\n}" },
   { value: "csharp", label: "ASP.NET (C#)", placeholder: "using System;\n// ASP.NET C# class\npublic class Program {\n    public static void Main() {\n        Console.WriteLine(\"Hello World from ASP.NET C#\");\n    }\n}" },
   { value: "html", label: "Twig", placeholder: "{# Modèle Twig #}\n{% for article in articles %}\n  <article class=\"post\">\n    <h2>{{ article.title }}</h2>\n    <p>{{ article.summary }}</p>\n  </article>\n{% endfor %}" },
@@ -1641,89 +1644,113 @@ export default function App() {
       {/* GENERATED SHARE MODAL */}
       {showShareModal && shareUrl && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1e1e2e] border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-scaleUp">
+          <div className="bg-[#1e1e2e] border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl relative animate-scaleUp">
             
             <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2.5 mb-2 uppercase tracking-wide">
               <Share2 className="w-4 h-4 text-indigo-400" />
               <span>Lien d'entraide généré !</span>
             </h3>
 
-            <p className="text-xs text-slate-400 leading-relaxed mb-6">
-              Votre extrait de code web est sauvegardé de manière éphémère. Partagez le lien avec d'autres développeurs pour demander des corrections saines.
+            <p className="text-xs text-slate-400 leading-relaxed mb-5">
+              Votre extrait de code web est sauvegardé de manière éphémère. Partagez le lien avec d'autres développeurs ou flashez le QR code pour travailler depuis votre mobile !
             </p>
 
-            {/* Generated Link Input */}
-            <div className="flex items-center gap-2 bg-[#0f172a] p-2.5 rounded-xl border border-slate-805 mb-6">
-              <input
-                type="text"
-                readOnly
-                value={shareUrl}
-                className="flex-1 bg-transparent font-mono text-xs text-slate-300 focus:outline-none px-2 select-all outline-none"
-              />
-              <button
-                onClick={() => copyToClipboard(shareUrl, "url")}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-505 text-white font-bold text-xs rounded-lg shadow-sm transition-colors"
-              >
-                {copiedUrlActive ? (
-                  <>
-                    <Check className="w-3 h-3" />
-                    <span>Copié</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3 h-3" />
-                    <span>Copier</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Social Sharing Dropdown Component */}
-            <div className="mb-6 relative">
-              <button
-                onClick={() => setShowSocialDropdown(!showSocialDropdown)}
-                className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-900 border border-slate-800 rounded-xl hover:bg-slate-800 text-xs font-bold text-slate-300 transition-all select-none cursor-pointer"
-              >
-                <div className="flex items-center gap-2">
-                  <Share2 className="w-3.5 h-3.5 text-indigo-400" />
-                  <span>Partager sur les réseaux sociaux</span>
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-5 mb-5 items-stretch">
+              {/* Left actions */}
+              <div className="md:col-span-3 flex flex-col justify-between gap-4">
+                {/* Link input */}
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1.5">Lien de partage</label>
+                  <div className="flex items-center gap-2 bg-[#0f172a] p-2.5 rounded-xl border border-slate-800">
+                    <input
+                      type="text"
+                      readOnly
+                      value={shareUrl}
+                      className="flex-1 bg-transparent font-mono text-xs text-slate-300 focus:outline-none px-1 select-all outline-none"
+                    />
+                    <button
+                      onClick={() => copyToClipboard(shareUrl, "url")}
+                      className="flex items-center gap-1.2 px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg shadow-sm transition-colors shrink-0"
+                    >
+                      {copiedUrlActive ? (
+                        <>
+                          <Check className="w-3 h-3" />
+                          <span>Copié</span>
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="w-3 h-3" />
+                          <span>Copier</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
-                <span className="text-[10px] text-slate-500 font-mono transition-transform">
-                  {showSocialDropdown ? "▼" : "▲"}
-                </span>
-              </button>
 
-              {showSocialDropdown && (
-                <div className="absolute left-0 right-0 mt-1 bg-[#242436] border border-slate-800 rounded-xl shadow-xl z-50 p-1.5 flex flex-col gap-0.5 overflow-hidden animate-fadeIn">
-                  <a
-                    href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent("Besoin d'aide sur SeeMyCode! " + (title ? `« ${title} »` : ""))}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg hover:bg-indigo-600/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                {/* Social Sharing Dropdown Component */}
+                <div className="relative">
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1.5">Partage rapide</label>
+                  <button
+                    onClick={() => setShowSocialDropdown(!showSocialDropdown)}
+                    className="w-full flex items-center justify-between px-3.5 py-2.5 bg-slate-900 border border-slate-800 rounded-xl hover:bg-slate-800 text-xs font-bold text-slate-300 transition-all select-none cursor-pointer"
                   >
-                    <Twitter className="w-3.5 h-3.5 text-sky-400" />
-                    <span className="font-medium">Partager sur Twitter / X</span>
-                  </a>
+                    <div className="flex items-center gap-2">
+                      <Share2 className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Partager sur les réseaux sociaux</span>
+                    </div>
+                    <span className="text-[10px] text-slate-500 font-mono transition-transform">
+                      {showSocialDropdown ? "▼" : "▲"}
+                    </span>
+                  </button>
 
-                  <a
-                    href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg hover:bg-indigo-600/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                  >
-                    <Linkedin className="w-3.5 h-3.5 text-blue-500" />
-                    <span className="font-medium">Partager sur LinkedIn</span>
-                  </a>
+                  {showSocialDropdown && (
+                    <div className="absolute left-0 right-0 mt-1 bg-[#242436] border border-slate-800 rounded-xl shadow-xl z-50 p-1.5 flex flex-col gap-0.5 overflow-hidden animate-fadeIn">
+                      <a
+                        href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent("Besoin d'aide sur SeeMyCode! " + (title ? `« ${title} »` : ""))}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg hover:bg-indigo-600/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                      >
+                        <Twitter className="w-3.5 h-3.5 text-sky-400" />
+                        <span className="font-medium">Partager sur Twitter / X</span>
+                      </a>
 
-                  <a
-                    href={`mailto:?subject=${encodeURIComponent("Aide sur SeeMyCode : " + (title || "Code snippet"))}&body=${encodeURIComponent("Bonjour,\n\nJ'aimerais que tu examines ou corriges mon code snippet sur SeeMyCode à cette adresse :\n" + shareUrl)}`}
-                    className="flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg hover:bg-indigo-600/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
-                  >
-                    <Mail className="w-3.5 h-3.5 text-rose-400" />
-                    <span className="font-medium">Envoyer par Email</span>
-                  </a>
+                      <a
+                        href={`https://www.linkedin.com/sharing/share-offsite/?url=${encodeURIComponent(shareUrl)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg hover:bg-indigo-600/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                      >
+                        <Linkedin className="w-3.5 h-3.5 text-blue-500" />
+                        <span className="font-medium">Partager sur LinkedIn</span>
+                      </a>
+
+                      <a
+                        href={`mailto:?subject=${encodeURIComponent("Aide sur SeeMyCode : " + (title || "Code snippet"))}&body=${encodeURIComponent("Bonjour,\n\nJ'aimerais que tu examines ou corriges mon code snippet sur SeeMyCode à cette adresse :\n" + shareUrl)}`}
+                        className="flex items-center gap-2.5 px-3 py-2 text-xs rounded-lg hover:bg-indigo-600/10 text-slate-300 hover:text-white transition-colors cursor-pointer"
+                      >
+                        <Mail className="w-3.5 h-3.5 text-rose-400" />
+                        <span className="font-medium">Envoyer par Email</span>
+                      </a>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
+
+              {/* Right QR Code Section */}
+              <div className="md:col-span-2 bg-[#12121a]/80 border border-slate-800/80 rounded-xl p-3.5 flex flex-col items-center justify-center text-center">
+                <div className="bg-white p-2 rounded-lg shadow-inner mb-2">
+                  <QRCodeSVG 
+                    value={shareUrl} 
+                    size={110} 
+                    level="M" 
+                    includeMargin={false}
+                    fgColor="#0f172a"
+                  />
+                </div>
+                <span className="text-[10px] font-bold text-slate-200">Scanner le QR Code</span>
+                <span className="text-[9px] text-slate-400 mt-0.5 leading-tight">Pour ouvrir rapidement votre code sur mobile</span>
+              </div>
             </div>
 
             {/* Config metadata / safety disclaimer */}
