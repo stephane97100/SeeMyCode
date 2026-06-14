@@ -46,8 +46,11 @@ interface CodeSnippet {
   createdAt: string;
   expiresAt: string;
   parentCodeId?: string;
+  rootCodeId?: string;
   isLocalFallback?: boolean;
   tags?: string[];
+  ownerId?: string;
+  ownerName?: string;
 }
 
 const LOCAL_DB_PATH = path.join(process.cwd(), "database.json");
@@ -68,6 +71,24 @@ const saveLocalSnippet = (snippet: CodeSnippet) => {
   snippets[snippet.id] = snippet;
   fs.writeFileSync(LOCAL_DB_PATH, JSON.stringify(snippets, null, 2), "utf-8");
 };
+
+async function findSnippetById(id: string): Promise<CodeSnippet | null> {
+  const hasFirebase = await initFirebase();
+  if (hasFirebase && firebaseDb) {
+    try {
+      const { doc, getDoc } = await import("firebase/firestore");
+      const docRef = doc(firebaseDb, "snippets", id);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        return docSnap.data() as CodeSnippet;
+      }
+    } catch (e) {
+      console.error("Firebase read failed inside findSnippetById:", e);
+    }
+  }
+  const snippets = getLocalSnippets();
+  return snippets[id] || null;
+}
 
 // Lazy Firebase Setup on Server Side
 let firebaseDb: any = null;
@@ -106,20 +127,30 @@ async function startServer() {
 
   // API 1: Auto-Correct Code with Gemini
   app.post("/api/correct", async (req, res) => {
-    const { code, language } = req.body;
+    const { code, language, geminiApiKey } = req.body;
+    const clientApiKey = req.headers["x-gemini-api-key"] || geminiApiKey;
 
     if (!code || !language) {
       return res.status(400).json({ error: "Code and Language are required in body." });
     }
 
-    if (!ai) {
-      return res.status(500).json({
-        error: "Le service d'intelligence artificielle n'est pas configuré. Veuillez vérifier la clé GEMINI_API_KEY dans vos Secrets.",
+    if (!clientApiKey) {
+      return res.status(400).json({
+        error: "Clé API Gemini d'utilisateur requise. Veuillez être connecté et avoir configuré votre propre clé API Gemini dans votre espace utilisateur pour utiliser les fonctionnalités d'assistance IA.",
       });
     }
 
     try {
-      const response = await ai.models.generateContent({
+      const userAi = new GoogleGenAI({
+        apiKey: String(clientApiKey).trim(),
+        httpOptions: {
+          headers: {
+            "User-Agent": "aistudio-build",
+          },
+        },
+      });
+
+      const response = await userAi.models.generateContent({
         model: "gemini-3.5-flash",
         contents: `Review the following ${language} code. Analyze potential runtime bugs, styling issues, vulnerabilities, and write a detailed French correction of this code:
 
@@ -162,15 +193,41 @@ ${code}
       return res.json(results);
     } catch (error: any) {
       console.error("Gemini Code Correction Error:", error);
+      const errMsg = error.message || String(error);
+
+      // Check for rate limits / quota issues
+      if (
+        errMsg.includes("RESOURCE_EXHAUSTED") || 
+        error.status === 429 || 
+        errMsg.includes("limit") || 
+        errMsg.includes("quota") || 
+        errMsg.includes("429")
+      ) {
+        return res.status(429).json({
+          error: "Limite de quota ou de taux atteinte pour votre clé API Gemini. Veuillez patienter selon les spécifications de votre compte Gemini (généralement 1 minute d'attente pour le niveau gratuit de Gemini) avant de soumettre une nouvelle demande d'aide.",
+        });
+      }
+
+      // Check for invalid keys
+      if (
+        errMsg.includes("API_KEY_INVALID") || 
+        error.status === 400 && errMsg.includes("key") ||
+        errMsg.includes("key is invalid")
+      ) {
+        return res.status(400).json({
+          error: "Votre clé API Gemini personnelle est invalide ou non reconnue par l'API de Google. Veuillez la vérifier et la corriger dans vos paramètres.",
+        });
+      }
+
       return res.status(500).json({
-        error: "Erreur lors de l'analyse du code par Gemini AI: " + (error.message || error),
+        error: "Erreur lors de l'analyse du code par Gemini AI avec votre clé : " + errMsg,
       });
     }
   });
 
   // API 2: Share Code with Community
   app.post("/api/share", async (req, res) => {
-    const { code, language, title, parentCodeId, tags } = req.body;
+    const { code, language, title, parentCodeId, tags, ownerId, ownerName } = req.body;
 
     if (!code || !language) {
       return res.status(400).json({ error: "Le code et le langage sont requis." });
@@ -183,6 +240,22 @@ ${code}
         .map((t: any) => String(t).trim())
         .filter((t: string) => t.length > 0 && t.length <= 50)
         .slice(0, 10);
+    }
+
+    // Resolve version lineage details
+    let rootCodeId: string | undefined = undefined;
+    if (parentCodeId) {
+      try {
+        const parentSnip = await findSnippetById(parentCodeId);
+        if (parentSnip) {
+          rootCodeId = parentSnip.rootCodeId || parentSnip.id;
+        } else {
+          rootCodeId = parentCodeId;
+        }
+      } catch (err) {
+        console.warn("Failed to find parent for rootCodeId resolution:", err);
+        rootCodeId = parentCodeId;
+      }
     }
 
     const id = generateUniqueId();
@@ -198,7 +271,10 @@ ${code}
       createdAt,
       expiresAt,
       parentCodeId: parentCodeId || undefined,
+      rootCodeId,
       tags: processedTags.length > 0 ? processedTags : undefined,
+      ownerId: ownerId || undefined,
+      ownerName: ownerName || undefined,
     };
 
     // Attempt Firebase
@@ -339,6 +415,57 @@ ${code}
     }
 
     return res.status(404).json({ error: "Snippet introuvable ou expiré." });
+  });
+
+  // API 4: Get version history family of a snippet
+  app.get("/api/snippets/:id/versions", async (req, res) => {
+    const { id } = req.params;
+
+    try {
+      const currentSnippet = await findSnippetById(id);
+      if (!currentSnippet) {
+        return res.status(404).json({ error: "Snippet introuvable pour récupérer l'historique des versions." });
+      }
+
+      const familyRootId = currentSnippet.rootCodeId || currentSnippet.id;
+
+      let snippetsList: CodeSnippet[] = [];
+
+      // Query database
+      const hasFirebase = await initFirebase();
+      if (hasFirebase && firebaseDb) {
+        try {
+          const { collection, getDocs } = await import("firebase/firestore");
+          const querySnapshot = await getDocs(collection(firebaseDb, "snippets"));
+          querySnapshot.forEach((docSnap) => {
+            const data = docSnap.data();
+            snippetsList.push({
+              id: docSnap.id,
+              ...data
+            } as CodeSnippet);
+          });
+        } catch (e) {
+          console.error("Firebase read for versions failed, falling back to local database.", e);
+        }
+      }
+
+      if (snippetsList.length === 0) {
+        snippetsList = Object.values(getLocalSnippets());
+      }
+
+      // Filter family line
+      const family = snippetsList.filter(s => {
+        return s.id === familyRootId || s.rootCodeId === familyRootId || s.parentCodeId === familyRootId;
+      });
+
+      // Sort ascending by creation date
+      family.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+
+      return res.json(family);
+    } catch (error: any) {
+      console.error("Error fetching version lineage family:", error);
+      return res.status(500).json({ error: "Erreur serveur lors de la récupération des versions." });
+    }
   });
 
   // Serve static files in production / Vite middleware in dev

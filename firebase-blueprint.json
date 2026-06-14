@@ -37,15 +37,93 @@
             "type": "string"
           },
           "description": "Custom tags added to the snippet"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user who owns this snippet, if saved while logged in"
+        },
+        "ownerName": {
+          "type": "string",
+          "description": "Display name of the user who owns this snippet"
+        },
+        "activeEditorUid": {
+          "type": "string",
+          "description": "UID of the guest or user actively locking this snippet for typing"
+        },
+        "activeEditorName": {
+          "type": "string",
+          "description": "Display name of the active editor"
+        },
+        "activeEditorExpires": {
+          "type": "integer",
+          "description": "Epoch timestamp in ms when the active typing lock expires"
         }
       },
       "required": ["code", "language", "createdAt", "expiresAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Stores user profile information, verified on signUp/in",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "email": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "photoURL": {
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string"
+        },
+        "geminiApiKey": {
+          "type": "string",
+          "description": "User's personal Gemini API key for running code helper and corrections"
+        }
+      },
+      "required": ["uid", "email", "displayName", "createdAt"]
+    },
+    "Presence": {
+      "title": "Presence",
+      "description": "Tracks a collaborator currently viewing the same snippet room",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        },
+        "photoURL": {
+          "type": "string"
+        },
+        "color": {
+          "type": "string"
+        },
+        "lastActive": {
+          "type": "integer"
+        }
+      },
+      "required": ["uid", "displayName", "lastActive", "color"]
     }
   },
   "firestore": {
     "snippets/{snippetId}": {
       "schema": "CodeSnippet",
       "description": "Storage for all shared code snippets"
+    },
+    "snippets/{snippetId}/presence/{presenceId}": {
+      "schema": "Presence",
+      "description": "Real-time presence of users inside a room"
+    },
+    "users/{userId}": {
+      "schema": "User",
+      "description": "Registered user profile information"
     }
   }
 }

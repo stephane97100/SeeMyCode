@@ -2,31 +2,77 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     
-    // Default deny catch-all
+    // Default catch-all security net
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Snippets Collection Rules
-    match /snippets/{snippetId} {
-      // Allow read (get only) by precise ID
-      allow get: if true;
-      allow list: if false; // Block query scraping
-
-      // Allow users to create snippets
-      allow create: if request.resource.data.code is string 
-                   && request.resource.data.code.size() <= 1048576 // limit 1MB code text
-                   && request.resource.data.language is string
-                   && request.resource.data.language.size() <= 128
-                   && request.resource.data.title is string
-                   && request.resource.data.title.size() <= 256
-                   && request.resource.data.createdAt is string
-                   && request.resource.data.expiresAt is string
-                   && (!("tags" in request.resource.data) || (request.resource.data.tags is list && request.resource.data.tags.size() <= 10 && (request.resource.data.tags.size() == 0 || request.resource.data.tags[0] is string)));
-                   
-      // Prevent updates or deletions to guarantee immutability of shared codes
-      allow update, delete: if false;
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
     }
 
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Users collection
+    match /users/{userId} {
+      allow read: if isSignedIn() && userId == request.auth.uid;
+      allow create, update: if isSignedIn() && userId == request.auth.uid && incoming().uid == request.auth.uid;
+    }
+
+    // Snippets Collection Rules
+    match /snippets/{snippetId} {
+      allow get: if true;
+      allow list: if true; // Search queries depend on broad list search with where filters
+
+      allow create: if incoming().code is string 
+                   && incoming().code.size() <= 1048576 // limit 1MB code text
+                   && incoming().language is string
+                   && incoming().language.size() <= 128
+                   && (!("ownerId" in incoming()) || (isSignedIn() && incoming().ownerId == request.auth.uid));
+
+      allow update: if (
+        // Enforce structural metadata immutability
+        (!("ownerId" in existing()) || ("ownerId" in incoming() && incoming().ownerId == existing().ownerId)) &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().expiresAt == existing().expiresAt &&
+        incoming().code is string &&
+        incoming().code.size() <= 1048576 &&
+        
+        // Typing lock check for concurrent edits protection
+        (
+          // Case A: Nobody holds lock or it has expired, allowing a new editor to claim it
+          existing().activeEditorUid == null ||
+          request.time.toMillis() > existing().activeEditorExpires ||
+          
+          // Case B: Current editor matching the active editor tries to update content
+          (
+            existing().activeEditorUid == (isSignedIn() ? request.auth.uid : incoming().activeEditorUid)
+          ) ||
+          
+          // Case C: Explicitly claiming or releasing the lock
+          (
+            incoming().activeEditorUid != existing().activeEditorUid
+          )
+        )
+      );
+
+      allow delete: if false; // Avoid snippet deletions to preserve historical links
+
+      // Real-time Presence Sub-collection
+      match /presence/{presenceId} {
+        allow read: if true; // Other users in same snippet room can see who is active
+        allow write, delete: if (
+          (isSignedIn() && presenceId == request.auth.uid && incoming().uid == request.auth.uid) ||
+          (!isSignedIn() && presenceId.startsWith("guest_") && incoming().uid == presenceId)
+        );
+      }
+    }
   }
 }

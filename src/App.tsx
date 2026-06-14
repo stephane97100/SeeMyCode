@@ -3,6 +3,7 @@ import Editor, { useMonaco } from "@monaco-editor/react";
 import { QRCodeSVG } from "qrcode.react";
 import {
   Terminal,
+  History,
   Check,
   Copy,
   Sparkles,
@@ -28,41 +29,34 @@ import {
   Filter,
   Eye,
   Maximize2,
-  Minimize2
+  Minimize2,
+  LogOut,
+  User,
+  Users,
+  Unlock,
+  Layers,
+  Sparkle,
+  Key,
+  EyeOff,
+  X
 } from "lucide-react";
+import { db, auth } from "./firebase";
+import { onAuthStateChanged, signOut, User as FirebaseUser } from "firebase/auth";
+import { doc, onSnapshot, updateDoc, setDoc, deleteDoc, collection, serverTimestamp } from "firebase/firestore";
+import AuthModal from "./components/AuthModal";
+import { DocSnippet, CoEditor, CorrectionResult } from "./types";
+import LanguageSelector, { SUPPORTED_LANGUMENTS } from "./components/LanguageSelector";
 
-// List of supported languages for the selector
-const SUPPORTED_LANGUMENTS = [
-  { value: "html", label: "HTML", placeholder: "<!-- Saisissez votre code HTML ici -->\n<div class='card'>\n  <h1>Bonjour !</h1>\n</div>" },
-  { value: "css", label: "CSS", placeholder: "/* Styles CSS */\n.card {\n  background: #3b82f6;\n  padding: 1rem;\n  border-radius: 8px;\n}" },
-  { value: "javascript", label: "JavaScript", placeholder: "// Code JS\nfunction calculateSum(a, b) {\n  return a + b;\n}\nconsole.log(calculateSum(5, 10));" },
-  { value: "typescript", label: "TypeScript", placeholder: "// Code TS\ninterface User {\n  id: number;\n  name: string;\n}\nconst greet = (u: User): string => `Hello ${u.name}`;" },
-  { value: "react", label: "React (TSX)", placeholder: "import React, { useState } from 'react';\n\nexport default function Counter() {\n  const [count, setCount] = useState(0);\n  return (\n    <div className=\"p-4 flex flex-col items-center justify-center bg-slate-900 text-white rounded-xl min-h-[150px]\">\n      <p className=\"text-sm font-mono text-slate-400 mb-2\">Composant React en action</p>\n      <button \n        onClick={() => setCount(count + 1)}\n        className=\"px-4 py-2 bg-indigo-600 hover:bg-indigo-505 rounded-lg font-bold text-xs shadow transition-all\"\n      >\n        Incrémenter : {count}\n      </button>\n    </div>\n  );\n}" },
-  { value: "python", label: "Python", placeholder: "# Script Python - Détermination des nombres premiers\ndef find_primes(limit):\n    primes = []\n    for num in range(2, limit + 1):\n        is_prime = True\n        for i in range(2, int(num ** 0.5) + 1):\n            if num % i == 0:\n                is_prime = False\n                break\n        if is_prime:\n            primes.append(num)\n    return primes\n\n# Affichage du résultat\nprint(\"Nombres premiers jusqu'à 20 :\", find_primes(20))" },
-  { value: "php", label: "PHP", placeholder: "<?php\n// Script PHP\n$items = ['HTML', 'CSS', 'JS'];\nforeach ($items as $item) {\n    echo \"Skill: $item\\n\";\n}" },
-  { value: "csharp", label: "ASP.NET (C#)", placeholder: "using System;\n// ASP.NET C# class\npublic class Program {\n    public static void Main() {\n        Console.WriteLine(\"Hello World from ASP.NET C#\");\n    }\n}" },
-  { value: "html", label: "Twig", placeholder: "{# Modèle Twig #}\n{% for article in articles %}\n  <article class=\"post\">\n    <h2>{{ article.title }}</h2>\n    <p>{{ article.summary }}</p>\n  </article>\n{% endfor %}" },
-  { value: "markdown", label: "Markdown", placeholder: "# Mon Snippet\n\n- Liste point 1\n- Liste point 2\n\n```js\nconsole.log('Hello');\n```" }
+const EDITOR_THEMES = [
+  { value: "vs-dark", label: "Sombre classique" },
+  { value: "light", label: "Clair classique" },
+  { value: "monokai", label: "Monokai Pro" },
+  { value: "solarized-dark", label: "Solarized Sombre" },
+  { value: "solarized-light", label: "Solarized Clair" },
+  { value: "dracula", label: "Dracula Gothic" },
 ];
 
-interface CorrectionResult {
-  success: boolean;
-  originalExplanation: string;
-  correctedCode: string;
-  correctionsList: string[];
-}
-
-interface DocSnippet {
-  id: string;
-  code: string;
-  language: string;
-  title?: string;
-  createdAt: string;
-  expiresAt: string;
-  parentCodeId?: string;
-  isLocalFallback?: boolean;
-  tags?: string[];
-}
+// Redundant local type interfaces have been refactored and central-imported from "./types" for clean schema compliance.
 
 function getPreviewDoc(code: string, language: string) {
   if (language === "html" || language === "twig") {
@@ -445,17 +439,78 @@ function getPreviewDoc(code: string, language: string) {
   `;
 }
 
+const FUN_NAMES = ["Hibou", "Tigre", "Renard", "Lynx", "Castor", "Panda", "Koala", "Pingouin", "Loutre", "Faucon", "Cerf", "Dauphin", "Lion", "Aigle"];
+const PASTEL_COLORS = ["#f87171", "#fb923c", "#fbbf24", "#34d399", "#2dd4bf", "#38bdf8", "#60a5fa", "#818cf8", "#a78bfa", "#f472b6"];
+
+const generateGuestProfile = () => {
+  const animal = FUN_NAMES[Math.floor(Math.random() * FUN_NAMES.length)];
+  const color = PASTEL_COLORS[Math.floor(Math.random() * PASTEL_COLORS.length)];
+  const digits = Math.floor(Math.random() * 900) + 100;
+  const guestId = "guest_" + Math.random().toString(36).substring(2, 9);
+  return {
+    uid: guestId,
+    displayName: `Codeur anonyme (${animal}) #${digits}`,
+    color: color
+  };
+};
+
 export default function App() {
   // Navigation / Loading States
   const [snippetId, setSnippetId] = useState<string | null>(null);
   const [isLoadingSnippet, setIsLoadingSnippet] = useState(false);
   const [snippetError, setSnippetError] = useState<string | null>(null);
 
+  // Authentication & Guest Profile States
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [sessionUser, setSessionUser] = useState<{ uid: string; displayName: string; color: string }>(() => {
+    const saved = sessionStorage.getItem("seemycode_guest_profile");
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        // ignore
+      }
+    }
+    const generated = generateGuestProfile();
+    sessionStorage.setItem("seemycode_guest_profile", JSON.stringify(generated));
+    return generated;
+  });
+  const [showAuthModal, setShowAuthModal] = useState(false);
+
+  // Gemini and User custom states
+  const [userProfile, setUserProfile] = useState<any | null>(null);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showRestrictionModal, setShowRestrictionModal] = useState(false);
+  const [showApiKeyPromptModal, setShowApiKeyPromptModal] = useState(false);
+  const [geminiApiKeyInput, setGeminiApiKeyInput] = useState("");
+  const [isSavingApiKey, setIsSavingApiKey] = useState(false);
+  const [apiKeyVisible, setApiKeyVisible] = useState(false);
+  const [apiKeyError, setApiKeyError] = useState<string | null>(null);
+
+  // Collaboration and Lock states
+  const [coEditors, setCoEditors] = useState<CoEditor[]>([]);
+  const [currentLock, setCurrentLock] = useState<{
+    activeEditorUid: string | null;
+    activeEditorName: string | null;
+    activeEditorExpires: number | null;
+  }>({
+    activeEditorUid: null,
+    activeEditorName: null,
+    activeEditorExpires: null,
+  });
+
   // Editor State
   const [code, setCode] = useState("");
   const [language, setLanguage] = useState("javascript");
   const [title, setTitle] = useState("");
   const [parentCodeId, setParentCodeId] = useState<string | null>(null);
+
+  // Pre-defined Custom Syntax Highlighting Themes state
+  const [editorTheme, setEditorTheme] = useState(() => localStorage.getItem("seemycode_editor_theme") || "vs-dark");
+
+  // Version History Lineage family states
+  const [snippetVersions, setSnippetVersions] = useState<DocSnippet[]>([]);
+  const [originalLoadedCode, setOriginalLoadedCode] = useState("");
 
   // Correction AI States
   const [isCorrecting, setIsCorrecting] = useState(false);
@@ -488,8 +543,15 @@ export default function App() {
   // Show Tutorial / Firebase Explain section
   const [showTtlExplain, setShowTtlExplain] = useState(false);
 
-  // Mode Lecture Seule (Community View)
-  const isReadOnlyMode = !!snippetId;
+  // Mode Lecture Seule (Dynamically locked if another co-editor is holding the typing token)
+  const isEditingLockedByOther = !!snippetId && 
+                                 currentLock.activeEditorUid !== null && 
+                                 currentLock.activeEditorUid !== (user ? user.uid : sessionUser.uid) && 
+                                 currentLock.activeEditorExpires !== null && 
+                                 Date.now() < currentLock.activeEditorExpires;
+
+  const isReadOnlyMode = isEditingLockedByOther;
+  const isCollabMode = !!snippetId;
 
   // Real-time Linting / Diagnostics States
   const [showLinting, setShowLinting] = useState(true);
@@ -526,6 +588,127 @@ export default function App() {
   const editorRef = useRef<any>(null);
 
   const monaco = useMonaco();
+
+  // Define custom editor themes in Monaco
+  useEffect(() => {
+    if (!monaco) return;
+
+    // Define Monokai Pro
+    monaco.editor.defineTheme("monokai", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "75715E", fontStyle: "italic" },
+        { token: "keyword", foreground: "F92672" },
+        { token: "number", foreground: "AE81FF" },
+        { token: "string", foreground: "E6DB74" },
+        { token: "type", foreground: "66D9EF" },
+        { token: "class", foreground: "A6E22E" },
+        { token: "function", foreground: "A6E22E" },
+        { token: "variable", foreground: "F8F8F2" },
+      ],
+      colors: {
+        "editor.background": "#272822",
+        "editor.foreground": "#f8f8f2",
+        "editorCursor.foreground": "#f8f8f0",
+        "editor.lineHighlightBackground": "#3E3D32",
+        "editorLineNumber.foreground": "#90908a",
+      },
+    });
+
+    // Define Solarized Dark
+    monaco.editor.defineTheme("solarized-dark", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "586e75", fontStyle: "italic" },
+        { token: "keyword", foreground: "859900" },
+        { token: "number", foreground: "d33682" },
+        { token: "string", foreground: "2aa198" },
+        { token: "type", foreground: "b58900" },
+        { token: "class", foreground: "268bd2" },
+        { token: "function", foreground: "268bd2" },
+        { token: "variable", foreground: "839496" },
+      ],
+      colors: {
+        "editor.background": "#002b36",
+        "editor.foreground": "#839496",
+        "editorCursor.foreground": "#839496",
+        "editor.lineHighlightBackground": "#073642",
+        "editorLineNumber.foreground": "#586e75",
+      },
+    });
+
+    // Define Solarized Light
+    monaco.editor.defineTheme("solarized-light", {
+      base: "vs",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "93a1a1", fontStyle: "italic" },
+        { token: "keyword", foreground: "859900" },
+        { token: "number", foreground: "d33682" },
+        { token: "string", foreground: "2aa198" },
+        { token: "type", foreground: "b58900" },
+        { token: "class", foreground: "268bd2" },
+        { token: "function", foreground: "268bd2" },
+        { token: "variable", foreground: "586e75" },
+      ],
+      colors: {
+        "editor.background": "#fdf6e3",
+        "editor.foreground": "#586e75",
+        "editorCursor.foreground": "#002b36",
+        "editor.lineHighlightBackground": "#eee8d5",
+        "editorLineNumber.foreground": "#93a1a1",
+      },
+    });
+
+    // Define Dracula Gothic
+    monaco.editor.defineTheme("dracula", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "comment", foreground: "6272a4", fontStyle: "italic" },
+        { token: "keyword", foreground: "ff79c6" },
+        { token: "number", foreground: "bd93f9" },
+        { token: "string", foreground: "f1fa8c" },
+        { token: "type", foreground: "8be9fd" },
+        { token: "class", foreground: "50fa7b" },
+        { token: "function", foreground: "50fa7b" },
+        { token: "variable", foreground: "f8f8f2" },
+      ],
+      colors: {
+        "editor.background": "#282a36",
+        "editor.foreground": "#f8f8f2",
+        "editorCursor.foreground": "#f8f8f2",
+        "editor.lineHighlightBackground": "#44475a",
+        "editorLineNumber.foreground": "#6272a4",
+      },
+    });
+  }, [monaco]);
+
+  // Persist selected theme
+  useEffect(() => {
+    localStorage.setItem("seemycode_editor_theme", editorTheme);
+  }, [editorTheme]);
+
+  // Fetch version history family list
+  const fetchSnippetVersions = async (id: string) => {
+    try {
+      const res = await fetch(`/api/snippets/${id}/versions`);
+      if (res.ok) {
+        const list = await res.json();
+        setSnippetVersions(list || []);
+      }
+    } catch (err) {
+      console.warn("Failed to retrieve versions lineage:", err);
+    }
+  };
+
+  const handleLoadVersion = (versionId: string) => {
+    window.history.pushState(null, "", `/code/${versionId}`);
+    setSnippetId(versionId);
+    fetchSharedSnippet(versionId);
+  };
 
   // Dynamic Toggle for Monaco Diagnostics Config
   useEffect(() => {
@@ -608,6 +791,154 @@ export default function App() {
     };
   }, [monaco, showLinting, code, language]);
 
+  // Performance-optimal stability refs for real-time Firestore listeners
+  const codeRef = useRef(code);
+  const languageRef = useRef(language);
+  const titleRef = useRef(title);
+
+  useEffect(() => {
+    codeRef.current = code;
+  }, [code]);
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
+  useEffect(() => {
+    titleRef.current = title;
+  }, [title]);
+
+  // Auth Status Observer
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // User Profile Observer (for fetching stored Gemini API key)
+  useEffect(() => {
+    if (!user) {
+      setUserProfile(null);
+      setGeminiApiKeyInput("");
+      return;
+    }
+    const userRef = doc(db, "users", user.uid);
+    const unsubscribe = onSnapshot(userRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.data();
+        setUserProfile(data);
+        setGeminiApiKeyInput(data?.geminiApiKey || "");
+      } else {
+        setUserProfile(null);
+        setGeminiApiKeyInput("");
+      }
+    }, (err) => {
+      console.warn("User profile not yet created or accessible:", err);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  // Real-time Collaboration, Lock Claim and Presence Heartbeat
+  useEffect(() => {
+    if (!snippetId) {
+      setCoEditors([]);
+      setCurrentLock({ activeEditorUid: null, activeEditorName: null, activeEditorExpires: null });
+      return;
+    }
+
+    const myUid = user ? user.uid : sessionUser.uid;
+    const myDisplayName = user ? user.displayName : sessionUser.displayName;
+    const myColor = sessionUser.color;
+    const myPhotoURL = user?.photoURL || "";
+
+    // A. Heartbeat registration
+    const registerPresence = async () => {
+      try {
+        const presenceRef = doc(db, "snippets", snippetId, "presence", myUid);
+        await setDoc(presenceRef, {
+          uid: myUid,
+          displayName: myDisplayName,
+          color: myColor,
+          lastActive: Date.now(),
+          photoURL: myPhotoURL
+        });
+      } catch (e) {
+        // Safe silence in case of connection drop
+      }
+    };
+
+    registerPresence();
+    const presenceTimer = setInterval(registerPresence, 4000);
+
+    // B. Subscribing to presence listings (clean up stale co-editors automatically)
+    const presenceCol = collection(db, "snippets", snippetId, "presence");
+    const unsubscribePresence = onSnapshot(presenceCol, (snapshot) => {
+      const list: CoEditor[] = [];
+      const now = Date.now();
+      snapshot.forEach((docSnap) => {
+        const d = docSnap.data();
+        if (d && d.uid && now - d.lastActive < 15000) {
+          list.push({
+            uid: d.uid,
+            displayName: d.displayName,
+            color: d.color,
+            lastActive: d.lastActive,
+            photoURL: d.photoURL || ""
+          });
+        }
+      });
+      setCoEditors(list);
+    }, (err) => {
+      console.error("Presence subscription warning:", err);
+    });
+
+    // C. Subscribe to Code Snippet changes
+    const snippetRef = doc(db, "snippets", snippetId);
+    const unsubscribeSnippet = onSnapshot(snippetRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as DocSnippet;
+        
+        const lockUid = data.activeEditorUid || null;
+        const lockName = data.activeEditorName || null;
+        const lockExpires = data.activeEditorExpires || null;
+
+        setCurrentLock({
+          activeEditorUid: lockUid,
+          activeEditorName: lockName,
+          activeEditorExpires: lockExpires
+        });
+
+        // Determine if editing is currently occupied
+        const isOccupiedByOther = lockUid !== null && lockUid !== myUid && lockExpires !== null && Date.now() < lockExpires;
+
+        if (isOccupiedByOther || lockUid === null) {
+          if (data.code !== undefined && data.code !== codeRef.current) {
+            setCode(data.code);
+          }
+        }
+
+        if (data.language && data.language !== languageRef.current) {
+          setLanguage(data.language);
+        }
+        if (data.title && data.title !== titleRef.current) {
+          setTitle(data.title);
+        }
+        if (data.tags) {
+          setLoadedTags(data.tags);
+        }
+      }
+    }, (err) => {
+      console.error("Snippet synchronization warning:", err);
+    });
+
+    // D. Cleanup hooks
+    return () => {
+      clearInterval(presenceTimer);
+      unsubscribePresence();
+      unsubscribeSnippet();
+      deleteDoc(doc(db, "snippets", snippetId, "presence", myUid)).catch(() => {});
+    };
+  }, [snippetId, user, sessionUser]);
+
   // React on address path change for modern community load
   useEffect(() => {
     const handleLocationChange = () => {
@@ -633,15 +964,94 @@ export default function App() {
   }, [snippetId]);
 
   // Adjust placeholder when language changes
-  const handleLanguageChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newLang = e.target.value;
+  const handleLanguageChange = async (newLang: string) => {
     setLanguage(newLang);
     // Only replace if current code is standard placeholder of another language or empty
     const isPlaceholder = SUPPORTED_LANGUMENTS.some(l => l.placeholder.trim() === code.trim() || code.trim() === "");
+    let updatedCode = code;
     if (isPlaceholder || code === "") {
       const targetLang = SUPPORTED_LANGUMENTS.find(l => l.value === newLang);
-      setCode(targetLang?.placeholder || "");
+      updatedCode = targetLang?.placeholder || "";
+      setCode(updatedCode);
     }
+
+    if (snippetId) {
+      try {
+        const snipRef = doc(db, "snippets", snippetId);
+         await updateDoc(snipRef, {
+          language: newLang,
+          code: updatedCode
+        });
+      } catch (err) {
+        console.error("Failed to sync language selection:", err);
+      }
+    }
+  };
+
+  // Co-editing lock touch and debounced Firestore sync
+  const lastLockTouchRef = useRef<number>(0);
+  const debounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const releaseLockTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const triggerFirestoreCollabWrite = (newCode: string) => {
+    if (!snippetId) return;
+
+    const myUid = user ? user.uid : sessionUser.uid;
+    const myDisplayName = user ? user.displayName : sessionUser.displayName;
+
+    // 1. Touch lock to claim/renew it immediately (runs once every 2 seconds during typing)
+    if (Date.now() - lastLockTouchRef.current > 2000) {
+      lastLockTouchRef.current = Date.now();
+      const snipRef = doc(db, "snippets", snippetId);
+      updateDoc(snipRef, {
+        activeEditorUid: myUid,
+        activeEditorName: myDisplayName,
+        activeEditorExpires: Date.now() + 6000 // lock valid for 6 seconds
+      }).catch((e) => console.warn("Lock claim failed:", e));
+    }
+
+    // 2. Debounce code payload write to Firestore
+    if (debounceTimeoutRef.current) {
+      clearTimeout(debounceTimeoutRef.current);
+    }
+    debounceTimeoutRef.current = setTimeout(async () => {
+      try {
+        const snipRef = doc(db, "snippets", snippetId);
+        await updateDoc(snipRef, {
+          code: newCode,
+          activeEditorUid: myUid,
+          activeEditorName: myDisplayName,
+          activeEditorExpires: Date.now() + 6000
+        });
+      } catch (err) {
+        console.warn("Debounced Firestore saving failed:", err);
+      }
+    }, 450); // 450ms debounce keeps the collab view highly real-time while maintaining strict quota counts
+
+    // 3. Auto-release lock after 3.5 seconds of silence
+    if (releaseLockTimeoutRef.current) {
+      clearTimeout(releaseLockTimeoutRef.current);
+    }
+    releaseLockTimeoutRef.current = setTimeout(async () => {
+      try {
+        const snipRef = doc(db, "snippets", snippetId);
+        await updateDoc(snipRef, {
+          activeEditorUid: null,
+          activeEditorExpires: null
+        });
+        lastLockTouchRef.current = 0;
+      } catch (e) {
+        // ignore
+      }
+    }, 3500);
+  };
+
+  const handleEditorChange = (val: string | undefined) => {
+    const newCode = val || "";
+    setCode(newCode);
+
+    // Keep published snippets immutable! Real-time typing changes are local drafts
+    // until explicitly shared/published as a new linked version.
   };
 
   // Fetch from DB
@@ -657,11 +1067,15 @@ export default function App() {
       }
       const data: DocSnippet = await response.json();
       setCode(data.code);
+      setOriginalLoadedCode(data.code);
       setLanguage(data.language);
       setTitle(data.title || "");
       setParentCodeId(data.parentCodeId || null);
       setLoadedTags(data.tags || []);
       setTagInput(data.tags ? data.tags.join(", ") : "");
+      
+      // Fetch version lineage family
+      fetchSnippetVersions(id);
     } catch (err: any) {
       console.error(err);
       setSnippetError(err.message || "Erreur de chargement.");
@@ -670,9 +1084,50 @@ export default function App() {
     }
   };
 
+  // save Gemini API Key to profile in Firestore
+  const handleSaveGeminiApiKey = async (customKey: string) => {
+    if (!user) return;
+    setIsSavingApiKey(true);
+    setApiKeyError(null);
+    try {
+      const userRef = doc(db, "users", user.uid);
+      await setDoc(userRef, {
+        uid: user.uid,
+        email: user.email,
+        displayName: user.displayName || user.email?.split("@")[0] || "Membre",
+        createdAt: user.metadata.creationTime || new Date().toISOString(),
+        geminiApiKey: customKey.trim()
+      }, { merge: true });
+      setShowSettingsModal(false);
+      setShowApiKeyPromptModal(false);
+    } catch (err: any) {
+      console.error("Error saving Gemini API key:", err);
+      setApiKeyError(err.message || "Erreur de base de données. Impossible d'enregistrer.");
+    } finally {
+      setIsSavingApiKey(false);
+    }
+  };
+
   // call Gemini correction api
-  const handleCorrectCode = async () => {
+  const handleCorrectCode = async (explicitKey?: string) => {
     if (!code.trim()) return;
+
+    // 1. Unregistered user check (s'il n'est pas enregistré alors il ne pourra que partager son code)
+    if (!user) {
+      setShowRestrictionModal(true);
+      return;
+    }
+
+    // 2. Missing API key check (demande à chaque utilisateur enregistré sa clef api gémini)
+    const activeKey = explicitKey || userProfile?.geminiApiKey;
+    if (!activeKey) {
+      setApiKeyError(null);
+      // pre-load whatever might be in the state input
+      setGeminiApiKeyInput(userProfile?.geminiApiKey || "");
+      setShowApiKeyPromptModal(true);
+      return;
+    }
+
     setIsCorrecting(true);
     setCorrectionResult(null);
     setCorrectionError(null);
@@ -680,8 +1135,15 @@ export default function App() {
     try {
       const response = await fetch("/api/correct", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code, language })
+        headers: { 
+          "Content-Type": "application/json",
+          "x-gemini-api-key": activeKey.trim()
+        },
+        body: JSON.stringify({ 
+          code, 
+          language,
+          geminiApiKey: activeKey.trim() 
+        })
       });
 
       if (!response.ok) {
@@ -717,7 +1179,9 @@ export default function App() {
           language,
           title: title.trim() || "Snippet d'entraide",
           parentCodeId: parentCodeId || undefined,
-          tags: tagsArray
+          tags: tagsArray,
+          ownerId: user?.uid || null,
+          ownerName: user?.displayName || user?.email || null
         })
       });
 
@@ -834,20 +1298,13 @@ export default function App() {
           
           <div className="h-6 w-px bg-slate-700 mx-2 hidden md:block"></div>
           
-          <div className="hidden md:flex items-center gap-1 bg-slate-800 rounded-md px-3 py-1.5 border border-slate-700">
-            <span className="text-[11px] font-medium text-slate-400">Language:</span>
-            <select
+          <div className="hidden md:flex items-center w-40">
+            <LanguageSelector
               value={language}
               onChange={handleLanguageChange}
               disabled={isReadOnlyMode}
-              className="bg-transparent text-xs font-semibold text-slate-200 outline-none cursor-pointer focus:ring-0"
-            >
-              {SUPPORTED_LANGUMENTS.map((lang, idx) => (
-                <option key={lang.label + idx} value={lang.value} className="bg-[#1e293b]">
-                  {lang.label}
-                </option>
-              ))}
-            </select>
+              size="sm"
+            />
           </div>
         </div>
 
@@ -865,22 +1322,29 @@ export default function App() {
             <button
               onClick={handleShareSnippet}
               disabled={isSharing || !code.trim()}
-              className="flex items-center gap-2 px-3.5 py-2 bg-white hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-900 transition-all disabled:opacity-40"
+              className="flex items-center gap-2 px-3.5 py-2 bg-[#4f46e5] text-white hover:bg-[#4338ca] rounded-lg text-xs font-bold transition-all disabled:opacity-40"
               id="share-btn"
             >
               {isSharing ? (
-                <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-900" />
+                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Share2 className="w-3.5 h-3.5 text-slate-900" />
+                <Share2 className="w-3.5 h-3.5" />
               )}
-              <span>Share</span>
+              <span>{snippetId && code !== originalLoadedCode ? "Save Version" : "Share"}</span>
             </button>
           )}
 
           <button
             onClick={handleCorrectCode}
-            disabled={isCorrecting || !code.trim()}
-            className="flex items-center gap-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-medium text-white shadow-lg shadow-indigo-500/20 transition-all disabled:opacity-40"
+            disabled={isCorrecting || !code.trim() || !user || !userProfile?.geminiApiKey}
+            className="flex items-center gap-2 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-lg text-xs font-semibold text-white shadow-lg shadow-indigo-500/20 transition-all disabled:opacity-40 disabled:bg-slate-800 disabled:text-slate-500 disabled:border-slate-700/80 disabled:shadow-none disabled:cursor-not-allowed"
+            title={
+              !user 
+                ? "Correction IA indisponible : Veuillez vous connecter pour utiliser votre propre clé Gemini" 
+                : !userProfile?.geminiApiKey 
+                ? "Correction IA indisponible : Clé API Gemini manquante dans vos paramètres" 
+                : "Corriger le code avec Gemini"
+            }
             id="correct-code-btn-header"
           >
             {isCorrecting ? (
@@ -893,31 +1357,136 @@ export default function App() {
 
           <button
             onClick={() => setShowTtlExplain(!showTtlExplain)}
-            className="p-2 bg-slate-800 hover:bg-slate-755 border border-slate-720 rounded-lg text-slate-400 hover:text-white"
-            title="Purge TTL Informations"
+            className="p-2 bg-slate-800 hover:bg-slate-755 border border-slate-720 rounded-lg text-slate-400 hover:text-white shrink-0 cursor-pointer"
+            title="Aide & explications TTL"
           >
             <HelpCircle className="w-4 h-4" />
           </button>
+
+          {/* Authentication interface section */}
+          <div className="h-6 w-px bg-slate-800 mx-1 hidden sm:block shrink-0" />
+
+           {user ? (
+            <div className="flex items-center gap-2.5 shrink-0 animate-fadeIn">
+              <div 
+                className="hidden md:flex flex-col items-end text-right"
+                title={`Connecté en tant que ${user.email}`}
+              >
+                <span className="text-xs font-bold text-white leading-none">{user.displayName || user.email?.split("@")[0]}</span>
+                <span className="text-[9px] text-indigo-400 font-mono tracking-wider font-semibold uppercase mt-0.5">Membre</span>
+              </div>
+              
+              {user.photoURL ? (
+                <img 
+                  src={user.photoURL} 
+                  alt={user.displayName || "Avatar"} 
+                  referrerPolicy="no-referrer"
+                  className="w-8 h-8 rounded-lg border border-slate-700 hover:border-indigo-500 transition-all object-cover ring-1 ring-slate-800"
+                />
+              ) : (
+                <div 
+                  className="w-8 h-8 rounded-lg bg-[#4f46e5]/40 border border-[#4f46e5]/50 flex items-center justify-center text-xs font-bold font-sans text-indigo-300 capitalize shadow-md"
+                >
+                  {(user.displayName || user.email || "U").charAt(0)}
+                </div>
+              )}
+
+              <button
+                onClick={() => {
+                  setGeminiApiKeyInput(userProfile?.geminiApiKey || "");
+                  setApiKeyError(null);
+                  setShowSettingsModal(true);
+                }}
+                className="p-2 bg-slate-800/80 hover:bg-slate-700 border border-slate-720 hover:border-amber-500/50 text-slate-400 hover:text-amber-400 rounded-lg transition-all cursor-pointer flex items-center gap-1.5"
+                title="Mon Espace & Clé API Gemini"
+                id="user-settings-btn"
+              >
+                <Key className="w-4 h-4 text-amber-500 shrink-0" />
+                <span className="hidden xl:inline text-[9px] font-bold font-mono tracking-wider uppercase">Clé API</span>
+              </button>
+
+              <button
+                onClick={() => signOut(auth)}
+                className="p-2 bg-slate-800/80 hover:bg-red-950/40 hover:text-red-400 border border-slate-720 hover:border-red-900/40 text-slate-400 rounded-lg transition-all cursor-pointer"
+                title="Déconnexion SeeMyCode"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setShowAuthModal(true)}
+              className="flex items-center gap-2 px-3.5 py-2 bg-indigo-600/20 hover:bg-indigo-600 hover:text-white border border-indigo-505/30 hover:border-indigo-500 rounded-lg text-xs font-bold text-indigo-400 transition-all cursor-pointer shrink-0"
+              id="header-login-btn"
+            >
+              <User className="w-3.5 h-3.5" />
+              <span>Se connecter</span>
+            </button>
+          )}
         </div>
       </nav>
 
-      {/* RETAIN BANNER IF COMM COMMUNITY MODE */}
-      {isReadOnlyMode && !isLoadingSnippet && !snippetError && (
-        <div className="bg-[#1e293b]/30 border-b border-slate-800 px-6 py-2.5 text-xs text-slate-400 shrink-0">
-          <div className="w-full flex items-center justify-between gap-3">
+      {/* IMMUTABLE DRAFT BANNER */}
+      {snippetId && code !== originalLoadedCode && (
+        <div className="bg-[#4f46e5]/10 border-b border-[#4f46e5]/20 px-6 py-2.5 text-xs font-sans text-indigo-300 shrink-0 animate-fadeIn">
+          <div className="w-full flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
               <span>
-                Vous examinez un code partagé : {title ? <strong className="text-white">« {title} »</strong> : "Code communautaire"}. Vous ne pouvez pas le modifier sur cette URL.
+                <strong>Mode brouillon :</strong> Vous personnalisez ce code partagé. L'original restera <strong>intact</strong> (immuable). Enregistrez pour créer la <strong>version {snippetVersions.length + 1}</strong> !
               </span>
             </div>
             <button
-              onClick={handleFork}
-              className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 font-medium px-3 py-1 rounded border border-slate-700 text-[11px] transition-all"
+              onClick={handleShareSnippet}
+              disabled={isSharing}
+              className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-505 text-white font-bold px-3 py-1 rounded text-[11px] transition-all cursor-pointer shadow border border-indigo-500/30"
             >
-              <GitFork className="w-3 h-3 text-indigo-400" />
-              <span>Forker ce code</span>
+              <Share2 className="w-3 h-3 text-white" />
+              <span>Publier Version {snippetVersions.length + 1}</span>
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* REAL-TIME COLLABORATION AND CONCURRENT LOCK BANNER */}
+      {isCollabMode && !isLoadingSnippet && !snippetError && (
+        <div className={`border-b border-slate-800/80 px-6 py-2 text-xs font-sans shrink-0 transition-all ${
+          isReadOnlyMode 
+            ? "bg-amber-500/10 text-amber-300" 
+            : "bg-emerald-500/10 text-emerald-300"
+        }`}>
+          <div className="w-full flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
+            <div className="flex items-center gap-2">
+              <span className={`w-2 h-2 rounded-full animate-pulse ${
+                isReadOnlyMode ? "bg-amber-400" : "bg-emerald-400"
+              }`} />
+              <span className="font-sans leading-relaxed">
+                {isReadOnlyMode ? (
+                  <>
+                    <strong>Co-édition verrouillée :</strong> {currentLock.activeEditorName || "Un collaborateur"} est en train d'écrire. L'éditeur est temporairement réservé pour éviter les conflits d'écritures.
+                  </>
+                ) : (
+                  <>
+                    <strong>Session collaborative active :</strong> Partagez ce lien avec vos pairs et co-codez en direct ! (Source de vérité : Firestore)
+                  </>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center gap-2.5">
+              {coEditors.length > 1 && (
+                <span className="hidden md:inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-mono px-2 py-0.5 bg-slate-800 rounded text-slate-400 border border-slate-700">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                  {coEditors.length} actifs
+                </span>
+              )}
+              <button
+                onClick={handleFork}
+                className="flex items-center gap-1.5 bg-slate-800 hover:bg-slate-700 text-slate-100 font-medium px-3 py-1 rounded border border-slate-700 text-[11px] transition-all cursor-pointer"
+              >
+                <GitFork className="w-3 h-3 text-indigo-400" />
+                <span>Forker ce code</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -1008,20 +1577,30 @@ export default function App() {
                     <span className="text-[10px] text-slate-500 uppercase font-mono tracking-widest block font-bold">
                       {isReadOnlyMode ? "Read-Only Mode" : "Modèle de conception"}
                     </span>
-                    <div className="flex items-center gap-1.5 bg-slate-800 rounded px-2 py-0.5 border border-slate-700 mt-1">
-                      <span className="text-[10px] font-medium text-slate-400 font-mono">LANG:</span>
-                      <select
-                        value={language}
-                        onChange={handleLanguageChange}
-                        disabled={isReadOnlyMode}
-                        className="bg-transparent text-[11px] font-bold text-slate-200 outline-none cursor-pointer"
-                      >
-                        {SUPPORTED_LANGUMENTS.map((lang, idx) => (
-                          <option key={lang.label + idx} value={lang.value} className="bg-slate-900">
-                            {lang.label}
-                          </option>
-                        ))}
-                      </select>
+                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <div className="w-40 shrink-0">
+                        <LanguageSelector
+                          value={language}
+                          onChange={handleLanguageChange}
+                          disabled={isReadOnlyMode}
+                          size="sm"
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-1.5 bg-slate-800 rounded px-2 py-0.5 border border-slate-705">
+                        <span className="text-[10px] font-medium text-slate-400 font-mono">THEME:</span>
+                        <select
+                          value={editorTheme}
+                          onChange={(e) => setEditorTheme(e.target.value)}
+                          className="bg-transparent text-[11px] font-bold text-slate-201 outline-none cursor-pointer"
+                        >
+                          {EDITOR_THEMES.map((t) => (
+                            <option key={t.value} value={t.value} className="bg-[#1e293b]">
+                              {t.label}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -1072,8 +1651,61 @@ export default function App() {
 
               </div>
 
-              {/* Monaco IDE Element */}
-              <div className="flex-1 bg-[#1e293b] border border-slate-800 rounded-xl overflow-hidden p-0 shadow-lg min-h-[400px] lg:min-h-[480px] xl:min-h-[520px] flex flex-col relative group">
+              {/* Editor Workspace & History Sidebar container */}
+              <div className="flex flex-col lg:flex-row gap-4 flex-1 items-stretch min-h-[450px] lg:min-h-0 lg:h-full">
+                
+                {/* Version History Lineage Sidebar */}
+                {snippetId && snippetVersions.length > 0 && (
+                  <div className="w-full lg:w-48 bg-[#152033]/65 border border-slate-800/80 rounded-xl p-4 flex flex-col gap-3 shrink-0">
+                    <div className="flex items-center gap-1.5 text-slate-300 font-bold text-xs select-none uppercase font-mono tracking-wider border-b border-slate-800/85 pb-2">
+                      <History className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Versions ({snippetVersions.length})</span>
+                    </div>
+                    <div className="flex lg:flex-col gap-2 overflow-x-auto lg:overflow-x-visible lg:overflow-y-auto max-h-48 lg:max-h-[385px] xl:max-h-[420px] pr-1.5 pb-2 lg:pb-0 scrollbar-thin">
+                      {snippetVersions.map((v, idx) => {
+                        const isActive = v.id === snippetId;
+                        const dateObj = new Date(v.createdAt);
+                        const dateLabel = isNaN(dateObj.getTime()) ? "Récemment" : dateObj.toLocaleDateString("fr-FR", {
+                          day: "numeric",
+                          month: "short",
+                        }) + " " + dateObj.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+
+                        return (
+                          <button
+                            key={v.id}
+                            type="button"
+                            onClick={() => handleLoadVersion(v.id)}
+                            className={`flex flex-col items-start gap-1 p-2.5 rounded-lg border text-left cursor-pointer transition-all min-w-[130px] lg:min-w-0 ${
+                              isActive
+                                ? "bg-indigo-650/45 border-indigo-500 text-white shadow-md shadow-indigo-500/10"
+                                : "bg-slate-950/40 border-slate-800 hover:border-slate-700 hover:bg-slate-850/60 text-slate-400 hover:text-slate-200"
+                            }`}
+                          >
+                            <div className="flex items-center justify-between w-full gap-1">
+                              <span className="text-[11px] font-mono font-bold">
+                                Version {idx === 0 ? "1 (Initiale)" : `${idx + 1}`}
+                              </span>
+                              {v.id === parentCodeId && (
+                                <span className="text-[8px] bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-1 rounded font-mono font-semibold uppercase">
+                                  Parent
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-500 block truncate font-sans">
+                              {v.title || "Version sans titre"}
+                            </span>
+                            <span className="text-[9px] text-slate-600 block shrink-0 font-mono">
+                              {dateLabel}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Monaco IDE Element */}
+                <div className="flex-1 bg-[#1e293b] border border-slate-800 rounded-xl overflow-hidden p-0 shadow-lg min-h-[400px] lg:min-h-[480px] xl:min-h-[520px] flex flex-col relative group">
                 
                 {/* Visual badge top of editor */}
                 <div className="h-10 bg-[#0f172a]/40 flex items-center justify-between px-4 border-b border-slate-800 gap-4 flex-wrap">
@@ -1160,10 +1792,10 @@ export default function App() {
                   <div className="flex-1 min-h-[380px] lg:min-h-0 lg:h-full p-2 bg-[#1e293b]">
                     <Editor
                       height="100%"
-                      language={language === "react" ? "typescript" : language}
-                      theme="vs-dark"
+                      language={language === "react" ? "typescript" : (language === "twig" ? "html" : language)}
+                      theme={editorTheme}
                       value={code}
-                      onChange={(val) => setCode(val || "")}
+                      onChange={handleEditorChange}
                       onMount={(editor) => {
                         editorRef.current = editor;
                       }}
@@ -1224,6 +1856,9 @@ export default function App() {
                     <span className="text-[10px] font-bold font-mono">Plein écran</span>
                   </button>
                 )}
+              </div>
+
+               {/* Closing Editor Workspace Container */}
               </div>
 
               {/* Real-time Syntax Watchdog Diagnostic Details */}
@@ -1321,47 +1956,88 @@ export default function App() {
               </div>
 
               {/* ACTION TOGGLE FOOTER */}
-              <div className="flex flex-col sm:flex-row gap-3">
-                <button
-                  onClick={handleCorrectCode}
-                  disabled={isCorrecting || !code.trim()}
-                  className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-5 py-3 rounded-xl shadow-lg shadow-indigo-500/10 transition-all disabled:opacity-40 disabled:cursor-not-allowed text-xs uppercase"
-                  id="correct-code-btn"
-                >
-                  {isCorrecting ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
-                      <span>Gemini analyse votre code...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles className="w-3.5 h-3.5 text-amber-300" />
-                      <span>Correct My Code (Analyse & Correction IA)</span>
-                    </>
-                  )}
-                </button>
-
-                {!isReadOnlyMode && (
+              <div className="flex flex-col gap-2">
+                <div className="flex flex-col sm:flex-row gap-3">
                   <button
-                    onClick={handleShareSnippet}
-                    disabled={isSharing || !code.trim()}
-                    className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-705 px-6 py-3 rounded-xl shadow-md transition-all disabled:opacity-40 text-xs uppercase"
-                    id="share-community-btn"
+                    onClick={handleCorrectCode}
+                    disabled={isCorrecting || !code.trim() || !user || !userProfile?.geminiApiKey}
+                    className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold px-5 py-3 rounded-xl shadow-lg shadow-indigo-500/10 transition-all disabled:opacity-40 disabled:bg-slate-800/80 disabled:text-slate-500 disabled:shadow-none disabled:cursor-not-allowed text-xs uppercase"
+                    id="correct-code-btn"
+                    title={
+                      !user 
+                        ? "Correction IA : Connexion requise" 
+                        : !userProfile?.geminiApiKey 
+                        ? "Correction IA : Clé API Gemini manquante" 
+                        : "Corriger et analyser mon code par IA"
+                    }
                   >
-                    {isSharing ? (
+                    {isCorrecting ? (
                       <>
-                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-300" />
-                        <span>Enreg...</span>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-white" />
+                        <span>Gemini analyse votre code...</span>
                       </>
                     ) : (
                       <>
+                        <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+                        <span>Correct My Code (Analyse & Correction IA)</span>
+                      </>
+                    )}
+                  </button>
+
+                  {!isReadOnlyMode && (
+                    <button
+                      onClick={handleShareSnippet}
+                      disabled={isSharing || !code.trim()}
+                      className="flex-1 sm:flex-initial flex items-center justify-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-705 px-6 py-3 rounded-xl shadow-md transition-all disabled:opacity-40 text-xs uppercase"
+                      id="share-community-btn"
+                    >
+                      {isSharing ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-300" />
+                          <span>Enreg...</span>
+                        </>
+                      ) : (
+                        <>
                         <Share2 className="w-3.5 h-3.5 text-slate-300" />
-                        <span>Share on Cloud (1 mois)</span>
+                        <span>{snippetId && code !== originalLoadedCode ? "Publier nouvelle version" : "Share on Cloud (1 mois)"}</span>
                       </>
                     )}
                   </button>
                 )}
               </div>
+
+              {(!user || !userProfile?.geminiApiKey) && (
+                <div className="mt-1 text-center bg-slate-900/40 border border-slate-800/70 p-2.5 rounded-xl animate-fadeIn">
+                  {!user ? (
+                    <p className="text-[11px] text-slate-400 leading-relaxed font-sans">
+                      Pour débloquer l'aide IA, veuillez{" "}
+                      <button
+                        onClick={() => setShowAuthModal(true)}
+                        className="text-indigo-400 hover:text-indigo-300 font-bold underline cursor-pointer inline-block"
+                      >
+                        vous connecter
+                      </button>{" "}
+                      et configurer votre clé Gemini personnelle.
+                    </p>
+                  ) : !userProfile?.geminiApiKey ? (
+                    <p className="text-[11px] text-slate-450 leading-relaxed font-sans">
+                      Votre compte est connecté. Veuillez{" "}
+                      <button
+                        onClick={() => {
+                          setGeminiApiKeyInput("");
+                          setApiKeyError(null);
+                          setShowSettingsModal(true);
+                        }}
+                        className="text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer inline-block"
+                      >
+                        configurer votre clé API Gemini
+                      </button>{" "}
+                      dans vos paramètres pour activer la correction IA.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </div>
 
               {/* EXPLORATEUR DE CODES COMMUNAUTAIRES (FIRESTORE CLOUD SEARCH) */}
               <div className="bg-[#1e293b]/20 border border-slate-800 rounded-2xl p-5 shadow-lg flex flex-col gap-4 mt-2">
@@ -1411,18 +2087,11 @@ export default function App() {
 
                       <div className="md:col-span-3 flex flex-col gap-1">
                         <label className="text-[10px] text-slate-500 uppercase font-mono font-bold">Langage</label>
-                        <select
+                        <LanguageSelector
                           value={searchLanguage}
-                          onChange={(e) => setSearchLanguage(e.target.value)}
-                          className="w-full bg-[#0f172a] text-xs px-3 py-2 border border-slate-800 rounded-lg text-slate-200 outline-none cursor-pointer focus:border-indigo-500"
-                        >
-                          <option value="all">Tous les langages</option>
-                          {SUPPORTED_LANGUMENTS.map((lang, idx) => (
-                            <option key={lang.label + idx} value={lang.value}>
-                              {lang.label}
-                            </option>
-                          ))}
-                        </select>
+                          onChange={(newVal) => setSearchLanguage(newVal)}
+                          showAllOption={true}
+                        />
                       </div>
 
                       <div className="md:col-span-4 flex flex-col gap-1">
@@ -1639,7 +2308,7 @@ export default function App() {
                       <div className="h-64 border border-slate-800 rounded bg-[#1e293b] p-1 overflow-hidden">
                         <Editor
                           height="100%"
-                          language={language}
+                          language={language === "react" ? "typescript" : (language === "twig" ? "html" : language)}
                           theme="vs-dark"
                           value={correctionResult.correctedCode}
                           options={{
@@ -1893,6 +2562,261 @@ export default function App() {
           </div>
         </div>
       </footer>
+
+      {/* AUTHENTICATION CONTEXT MODAL */}
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+      />
+
+      {/* USER SETTINGS MODAL */}
+      {showSettingsModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="bg-[#1e1e2e] border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative animate-scaleUp text-slate-200">
+            <button
+              onClick={() => {
+                setShowSettingsModal(false);
+                setApiKeyError(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100 p-1.5 bg-slate-800/50 hover:bg-slate-800 rounded-lg transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <h3 className="text-sm font-bold text-slate-100 flex items-center gap-2 mb-2 uppercase tracking-wide">
+              <Key className="w-4 h-4 text-amber-500" />
+              <span>Ma Clé API Gemini</span>
+            </h3>
+
+            <p className="text-xs text-slate-400 leading-relaxed mb-4">
+              Renseignez votre clé API Gemini personnelle (v1.5 / v2.0 ou v3.5) pour pouvoir exécuter des suggestions et des corrections automatiques de code par IA depuis SeeMyCode. Votre clé est enregistrée de manière confidentielle dans votre espace Firestore privé.
+            </p>
+
+            {apiKeyError && (
+              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl mb-4 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{apiKeyError}</span>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 font-mono">
+                  Saisir votre Clé API Gemini
+                </label>
+                <div className="relative flex items-center bg-[#0f172a] rounded-xl border border-slate-800">
+                  <input
+                    type={apiKeyVisible ? "text" : "password"}
+                    value={geminiApiKeyInput}
+                    onChange={(e) => setGeminiApiKeyInput(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-transparent font-mono text-xs text-slate-300 focus:outline-none pl-3.5 pr-10 py-3 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setApiKeyVisible(!apiKeyVisible)}
+                    className="absolute right-3 text-slate-500 hover:text-slate-300 p-1 rounded-md transition-colors"
+                  >
+                    {apiKeyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={isSavingApiKey}
+                  onClick={() => handleSaveGeminiApiKey(geminiApiKeyInput)}
+                  className="flex-1 py-2.5 px-4 bg-indigo-600 hover:bg-indigo-505 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isSavingApiKey ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Enregistrement...</span>
+                    </>
+                  ) : (
+                    <span>Enregistrer</span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowSettingsModal(false);
+                    setApiKeyError(null);
+                  }}
+                  className="py-2.5 px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition-all"
+                >
+                  Fermer
+                </button>
+              </div>
+
+              {userProfile?.geminiApiKey && (
+                <div className="pt-3 border-t border-slate-850 flex items-center justify-between text-[11px]">
+                  <span className="text-emerald-400 flex items-center gap-1.5 font-bold">
+                    <Check className="w-3.5 h-3.5" /> Clé active et mémorisée
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setGeminiApiKeyInput("");
+                      handleSaveGeminiApiKey("");
+                    }}
+                    className="text-red-400 hover:underline hover:text-red-300 font-mono text-[10px] uppercase font-bold"
+                  >
+                    Effacer la clé
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* GUEST MODE RESTRICTION WARNING */}
+      {showRestrictionModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="bg-[#1e1e2e] border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative animate-scaleUp text-slate-200">
+            <button
+              onClick={() => setShowRestrictionModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100 p-1.5 bg-slate-800/50 hover:bg-slate-800 rounded-lg transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex flex-col items-center text-center mt-2 mb-4">
+              <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-2xl text-red-400 mb-3.5">
+                <Lock className="w-6 h-6 animate-pulse" />
+              </div>
+              <h3 className="text-sm font-bold/80 text-slate-100 uppercase tracking-wide">
+                Correction assistée par l'IA
+              </h3>
+              <p className="text-xs text-red-400 font-bold mt-1.5">Fonctionnalité réservée aux membres connectés</p>
+            </div>
+
+            <p className="text-xs text-slate-450 leading-relaxed text-center mb-6">
+              Les visiteurs anonymes ont la possibilité d'éditer le code et de le partager avec la communauté. Cependant, l'<strong>analyse de bugs, l'assistance technique et la correction automatique par intelligence artificielle Gemini</strong> nécessitent d'être connecté et d'utiliser votre propre clé API.
+            </p>
+
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRestrictionModal(false);
+                  setShowAuthModal(true);
+                }}
+                className="w-full py-3 bg-indigo-650 hover:bg-indigo-600 text-white font-bold text-xs rounded-xl shadow-lg transition-all text-center flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <User className="w-4 h-4" />
+                <span>Créer un compte ou Se connecter</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowRestrictionModal(false)}
+                className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs rounded-xl transition-all text-center cursor-pointer"
+              >
+                Continuer en mode lecture seule IA
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MISSING USER API DECLARED PROMPT */}
+      {showApiKeyPromptModal && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
+          <div className="bg-[#1e1e2e] border border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl relative animate-scaleUp text-slate-200">
+            <button
+              onClick={() => {
+                setShowApiKeyPromptModal(false);
+                setApiKeyError(null);
+              }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-100 p-1.5 bg-slate-800/50 hover:bg-slate-800 rounded-lg transition-all"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="flex flex-col items-center text-center mt-2 mb-4">
+              <div className="p-3 bg-amber-500/10 border border-amber-500/20 rounded-2xl text-amber-400 mb-3">
+                <Sparkles className="w-6 h-6 animate-pulse text-amber-400" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-100 uppercase tracking-wide">
+                Clé API Gemini requise
+              </h3>
+              <p className="text-xs text-amber-400 font-semibold mt-1">Exécutez vos requêtes avec votre propre clé</p>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed text-center mb-5 font-sans">
+              Pour des raisons de quota et d'impartialité, SeeMyCode n'offre pas de clé partagée globale. Renseignez votre propre clé de développeur Google Gemini pour lancer l'analyse de votre code. Elle sera mémorisée de manière sécurisée dans votre profil.
+            </p>
+
+            {apiKeyError && (
+              <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl mb-4 text-xs">
+                <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span>{apiKeyError}</span>
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-1.5 font-mono text-left">
+                  Saisir votre Clé API Gemini
+                </label>
+                <div className="relative flex items-center bg-[#0f172a] rounded-xl border border-slate-800">
+                  <input
+                    type={apiKeyVisible ? "text" : "password"}
+                    value={geminiApiKeyInput}
+                    onChange={(e) => setGeminiApiKeyInput(e.target.value)}
+                    placeholder="AIzaSy..."
+                    className="w-full bg-transparent font-mono text-xs text-slate-300 focus:outline-none pl-3.5 pr-10 py-3 outline-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setApiKeyVisible(!apiKeyVisible)}
+                    className="absolute right-3 text-slate-500 hover:text-slate-300 p-1 rounded-md transition-colors"
+                  >
+                    {apiKeyVisible ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  disabled={isSavingApiKey || !geminiApiKeyInput.trim()}
+                  onClick={async () => {
+                    const keyToSave = geminiApiKeyInput.trim();
+                    await handleSaveGeminiApiKey(keyToSave);
+                    handleCorrectCode(keyToSave);
+                  }}
+                  className="w-full py-3 bg-indigo-600 hover:bg-indigo-505 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl shadow-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isSavingApiKey ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                      <span>Enregistrement...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+                      <span>Confirmer & Lancer la correction</span>
+                    </>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowApiKeyPromptModal(false);
+                    setApiKeyError(null);
+                  }}
+                  className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-xl transition-all cursor-pointer text-center"
+                >
+                  Plus tard
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
